@@ -1,8 +1,24 @@
-# Simple program for generating fringes on the fly and projecting them on a projector
+# Fringe Pattern Manager
 
-The only dependencies for this are python (3.11.7), numpy, Pillow, and pywin32 - you can find these all in requirements.txt.
-It could run on other versions of dependencies but I only tested with these as it is a very simple program...
 
-Note that this program doesn't do any fancy stuff - you can simply choose a display to project fringes on and... project them.
+### Introduction
 
-It will only works on Windows, but shouldn't take too much effort to port to UNIX-based systems
+Simple Python program for generating fringes on the fly and projecting them on a display-based projector. These projectors must appear as a regular "display" in Windows, i.e: they are connected by a video cable such as HDMI or VGA. 
+
+Note that this program doesn't do any fancy stuff with interrupt signalling/syncing - you can simply choose a display to project fringes on and... project them.
+
+
+### Requirements
+
+- Windows (shouldn't take too much effort to port to UNIX-based systems)
+- Python 3.11.7 
+
+
+### Dependencies 
+See requirements.txt
+
+It could run on other versions of dependencies but this has only tested with specified versions in requirements.txt
+
+- numpy
+- Pillow
+- pywin32 
