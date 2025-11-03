@@ -62,7 +62,7 @@ def after_project(phaseShiftIndex):
 def show_fringes(proj, fringe_patterns, warmup_time=3.0, duration=1.0, loop=False):
     # Controls for consecutive projections
 
-    last_frame = time.time_ns() - (warmup_time * 1e9)
+    last_frame = time.time_ns() + (warmup_time * 1e9)
     i = 0
     while True:
         now = time.time_ns()
