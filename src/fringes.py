@@ -1,6 +1,9 @@
 import numpy as np
 
-def CreateFringePattern(resolution, num_stripes, phase=0.0, rotation=0.0):
+def to_uint8(pattern: np.ndarray):
+    return (pattern * 255).astype(np.uint8)
+
+def create_pattern(resolution, num_stripes, phase=0.0, rotation=0.0):
     ''' 
         resolution: (width, height) in integer pixels\n
         num_stripes: float for total number of oscillations\n
@@ -25,7 +28,7 @@ def CreateFringePattern(resolution, num_stripes, phase=0.0, rotation=0.0):
 
     return fringes
 
-def CreateRGBFringePattern(resolution, num_stripes, phase=0.0, rotation=0.0):
+def create_rgb_pattern(resolution, num_stripes, phase=0.0, rotation=0.0):
     ''' 
         resolution: (width, height) in integer pixels\n
         num_stripes: float for total number of oscillations\n
@@ -33,5 +36,5 @@ def CreateRGBFringePattern(resolution, num_stripes, phase=0.0, rotation=0.0):
         rotation: float in radians for orientation of fringes\n
     '''
     
-    temp = np.dstack([CreateFringePattern(resolution, num_stripes, phase, rotation)] * 3)
+    temp = np.dstack([create_pattern(resolution, num_stripes, phase, rotation)] * 3)
     return temp
