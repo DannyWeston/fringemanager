@@ -1,10 +1,12 @@
 import platform
 import time
 import numpy as np
-import tkinter
+
+import contextlib
+with contextlib.redirect_stdout(None):
+    import pygame # Stupid library welcome message
 
 from abc import ABC, abstractmethod
-from PIL import Image, ImageTk
 
 class IProjector(ABC):
     @abstractmethod
@@ -21,209 +23,140 @@ class IProjector(ABC):
     def refresh_rate(self):
         raise NotImplementedError
 
-class OSDisplayProjector(IProjector):
-    def __init__(self):
-        self.__frame_update_cbs = []
+class DisplayProjector(IProjector):
+    def __init__(self, resolution, refresh_rate=10.0, display_num=0, warmup_time=0.0):
+        self.__num = display_num
 
-        self.__finished = False
-        self.__last_update = None
+        self.__on_draw_callbacks = []
+        self.__on_init_callbacks = []
 
-        self.__root = tkinter.Tk()
-        self.__root.configure(background='black')
+        self.finished = False
+        self.__drawn = None
+        self.__display = None
 
-        self.__root.overrideredirect(1)
-        self.__root.config(cursor='none')
-
-        # Create canvas that fills the entire window
-        self.__canvas = tkinter.Canvas(self.__root, background='black', highlightthickness=0)
-        self.__canvas.pack(fill='both', expand=True)
-
-        self.__img = self.__canvas.create_image(0, 0, anchor='nw')
-        self.__tk_img = None
-
-    @property
-    @abstractmethod
-    def name(self) -> str:
-        raise NotImplementedError
-
-    @property
-    @abstractmethod
-    def offset(self):
-        raise NotImplementedError
-    
-    @property
-    @abstractmethod
-    def name(self):
-        raise NotImplementedError
-    
-    def set_img(self, img):
-        self.__last_update = time.time_ns()
-        self.__finished = False
+        self.__warmed_up = False
         
-        h, w, *_, = img.shape
-        proj_w, proj_h = self.resolution
+        self.__surface = None
+        self.__clock = None
 
-        if (w, h) != self.resolution: # Must be same resolution
-            raise Exception(f"Image shape does not match resolution")
-
-        if img.dtype != np.uint8: # Must be uint8
-            raise Exception(f"Image dtype must be in np.uint8 format ({img.dtype} provided)")
-
-        if h != proj_h or w != proj_w:
-            raise Exception(f"The fringes provided do not match projector's resolution (given: {w}x{h}, projector: {proj_w}x{proj_h})")
+        self.__warmup_time = warmup_time
+        self.__refresh_rate = refresh_rate
         
-        proj_w, proj_h = self.resolution
+        pygame.init()
+        self.__display = pygame.display.set_mode(resolution, pygame.SHOWN | pygame.NOFRAME | pygame.FULLSCREEN, display=self.__num)
 
-        self.__tk_img = ImageTk.PhotoImage(Image.fromarray(img))
-        self.__canvas.itemconfig(self.__img, image=self.__tk_img)
-    
-    @property
-    def finished(self):
-        return self.__finished
+    def set_img(self, img: np.ndarray):
+        if img.dtype != np.uint8:
+            img = (img * 255).astype(np.uint8)
+
+        rot_img = np.rot90(img, k=3)
+        self.__surface = pygame.surfarray.make_surface(rot_img)
+
+        self.__drawn = False
 
     def show(self):
-        self.__finished = False
-        
-        w, h = self.resolution
-        x, y = self.offset
+        self.finished = False
+        self.__clock = pygame.time.Clock()
 
-        self.__root.geometry(f"{w}x{h}+{x}+{y}")
+        self.__display = pygame.display.set_mode(self.resolution, pygame.SHOWN | pygame.NOFRAME | pygame.FULLSCREEN, display=self.__num)
+        pygame.mouse.set_visible(False)
+        pygame.display.set_window_position(self.offset)
 
-        self.__root.bind("<Escape>", self.__on_finish)
-        self.__root.deiconify()
-        self.__root.focus_force()
+        # Check if slpash screen needed for warmup
+        if (not self.__warmed_up) and (0.0 < self.__warmup_time): 
+            self.set_img(self.default_img)
+            self.__draw()
 
-        while not self.__finished:
-            w, h = self.resolution
-            x, y = self.offset
+            wait_start = time.time_ns()
+            while True:
+                if (self.__warmup_time * 1e9) < (time.time_ns() - wait_start): break
+
+                self.__clock.tick(self.refresh_rate)
+
+        self.__warmed_up = True
+
+        for cb in self.__on_init_callbacks:
+            cb()
+
+        while not self.finished:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE):
+                    self.finished = True
+                    continue
             
-            self.__root.geometry(f"{w}x{h}+{x}+{y}")
+            if self.__draw():
+                for cb in self.__on_draw_callbacks:
+                    cb()
 
-            self.__root.update()
-            self.__root.update_idletasks()
+            self.__clock.tick(self.refresh_rate)
+        
+        pygame.mouse.set_visible(True)
+        self.__display = pygame.display.set_mode(self.resolution, pygame.HIDDEN | pygame.NOFRAME | pygame.FULLSCREEN, display=self.__num)
 
-            time.sleep(float(1.0 / self.refresh_rate)) # Not accurate as not synced with interrupt! Be warned!
 
-            for cb in self.__frame_update_cbs:
-                cb(self.__last_update)
+    def __draw(self):
+        if not self.__drawn:
+            self.__display.blit(self.__surface, (0, 0))
 
-        self.__cleanup()
+            pygame.display.update()
 
-    def add_frame_callback(self, cb):
-        self.__frame_update_cbs.append(cb)
+            self.__drawn = True
 
-    def remove_frame_callback(self, cb):
-        self.__frame_update_cbs.remove(cb)
+            return True
+        
+        return False
 
-    def __on_finish(self, e):
-        self.__finished = True
+    @property
+    def resolution(self):
+        return pygame.display.get_window_size()
 
-    def __cleanup(self):
-        self.__last_update = None
-        self.__root.unbind("<Escape>")
-        self.__root.withdraw()
+    @resolution.setter
+    def resolution(self, value):
+        self.__display = pygame.display.set_mode(value, pygame.SHOWN | pygame.NOFRAME, display=self.__num)
+    
+    @property
+    def refresh_rate(self) -> float:
+        return self.__refresh_rate
+
+    @refresh_rate.setter
+    def refresh_rate(self, value):
+        self.__refresh_rate = value
+
+    @property
+    def offset(self):
+        return pygame.display.get_window_position()
+
+    @property
+    def name(self) -> str:
+        return platform.system()
+
+    @property
+    def default_img(self):
+        w, h = self.resolution
+        return np.ones(shape=(h, w, 3), dtype=np.uint8) * 255
+
+    @property
+    def warmup_time(self):
+        return self.__warmup_time
+    
+    @warmup_time.setter
+    def warmup_time(self, value):
+        self.__warmup_time = value
+
+    def add_on_draw_callback(self, cb):
+        self.__on_draw_callbacks.append(cb)
+
+    def remove_on_draw_callback(self, cb):
+        self.__on_draw_callbacks.remove(cb)
+
+    def add_on_init_callback(self, cb):
+        self.__on_init_callbacks.append(cb)
+
+    def remove_on_init_callback(self, cb):
+        self.__on_init_callbacks.remove(cb)
 
     def __str__(self):
         w, h = self.resolution
         freq = self.refresh_rate
 
         return f'{self.name}Projector ({w}x{h}, {freq} hz)'
-
-if platform.system() == 'Linux':
-    
-    class DisplayManager:
-        @staticmethod
-        def get_display_handles():
-            return []
-
-    class DisplayProjector(OSDisplayProjector):
-        def __init__(self):
-            super().__init__()
-
-        @property
-        def name(self):
-            return "Linux"
-        
-elif platform.system() == "Windows":
-    import win32api
-    import win32con
-
-    class DisplayManager:
-        @staticmethod
-        def get_display_handles():
-            i = 0
-            monitors = []
-
-            while True:
-                try:
-                    device = win32api.EnumDisplayDevices(None, i, 0)
-
-                    if device.StateFlags & win32con.DISPLAY_DEVICE_ATTACHED_TO_DESKTOP:
-                        monitors.append(device)
-
-                except: return monitors
-
-                i += 1
-
-    class DisplayProjector(OSDisplayProjector):
-        def __init__(self, handle):
-            super().__init__()
-
-            self.__handle = handle
-
-        @property
-        def resolution(self):
-            devmode = win32api.EnumDisplaySettings(self.__handle.DeviceName, win32con.ENUM_REGISTRY_SETTINGS)
-
-            return devmode.PelsWidth, devmode.PelsHeight
-
-        @resolution.setter
-        def resolution(self, value):
-            ''' TODO '''
-            w, h = value
-
-            devmode = win32api.EnumDisplaySettings(self.__handle.DeviceName, win32con.ENUM_REGISTRY_SETTINGS)
-            devmode.PelsWidth = w
-            devmode.PelsHeight = h
-            devmode.Fields = win32con.DM_PELSWIDTH | win32con.DM_PELSHEIGHT
-
-            result = win32api.ChangeDisplaySettingsEx(self.__handle.DeviceName, devmode, win32con.CDS_UPDATEREGISTRY | win32con.CDS_RESET) 
-
-            if result != win32con.DISP_CHANGE_SUCCESSFUL:
-                raise Exception(f"Could not change resolution to {w}x{h} for Display <{self.__handle.DeviceName}>")
-            
-            return self
-        
-        @property
-        def refresh_rate(self):
-            ''' TODO '''
-            devmode = win32api.EnumDisplaySettings(self.__handle.DeviceName, win32con.ENUM_REGISTRY_SETTINGS)
-
-            return devmode.DisplayFrequency
-        
-        @refresh_rate.setter
-        def refresh_rate(self, value:int):
-            ''' TODO: Implement working solution - not Currently Supported! '''
-            raise NotImplementedError
-
-            # devmode = win32api.EnumDisplaySettings(self.__handle.DeviceName, win32con.ENUM_REGISTRY_SETTINGS)
-
-            # devmode.DisplayFrequency = value
-            # devmode.Fields = win32con.DM_DISPLAYFREQUENCY
-
-            # result = win32api.ChangeDisplaySettingsEx(self.__handle.DeviceName, devmode, win32con.CDS_UPDATEREGISTRY | win32con.CDS_RESET)
-
-            # if result != win32con.DISP_CHANGE_SUCCESSFUL:
-            #     raise Exception(f"Could not change refresh rate to {value} hz for Display <{self.__handle.DeviceName}>")
-            
-            # return self
-
-        @property
-        def offset(self):
-            devmode = win32api.EnumDisplaySettings(self.__handle.DeviceName, win32con.ENUM_REGISTRY_SETTINGS)
-
-            return devmode.Position_x, devmode.Position_y
-
-        @property
-        def name(self):
-            return "Windows"

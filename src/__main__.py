@@ -1,87 +1,116 @@
 import numpy as np
 import time
+
+from pathlib import Path
 from PIL import Image
 
 from . import fringes, projector
 
 # Daniel Weston
-# 15/12/2025
+# 16/12/2025
 # psydw2@nottingham.ac.uk
 
 class Program:
-    def __init__(self, proj: projector.OSDisplayProjector):
+    def __init__(self, proj: projector.DisplayProjector):
         # Use second display handle as default (not primary)
         self.proj = proj
 
-        self.p_index = None
-        self.loop = None
-        self.pattern_time = None
-        self.patterns = None
+        self.__patterns = None
+        self.__pattern_index = None
 
-    def run(self, patterns, loop=False, pattern_time=1.0):
-        self.p_index = 0
-        self.loop = loop
-        self.pattern_time = pattern_time
+    def run(self, patterns):
+        self.__captured_imgs = []
 
-        self.patterns = patterns
+        self.__patterns = patterns
 
-        # We can show the fringes on the projector
-        self.proj.add_frame_callback(self.on_frame_update)
-        self.proj.show()
+        self.proj.add_on_init_callback(self.on_init)
+        self.proj.add_on_draw_callback(self.on_draw)
 
-    def on_frame_update(self, last_update):
-        now = time.time_ns()
+        success = self.proj.show()
 
+        # Remove callbacks
+        self.proj.remove_on_draw_callback(self.on_draw)
+        self.proj.remove_on_init_callback(self.on_init)
+
+        return self.__captured_imgs if success else None
+
+    def gamma_calibrate(self, num_intensities=64):
+        self.__captured_imgs = []
+
+        self.__pattern_index = 0
+        w, h = proj.resolution
+
+        self.__patterns = np.asarray([
+            np.ones(shape=(h, w, 3), dtype=np.float32) * intensity
+            for intensity in np.linspace(0.0, 1.0, num_intensities, endpoint=True)
+        ])
+
+        # Add callbacks
+        self.proj.add_on_draw_callback(self.on_draw)
+        self.proj.add_on_init_callback(self.on_init)
+
+        success = self.proj.show()
+
+        # Remove callbacks
+        self.proj.remove_on_draw_callback(self.on_draw)
+        self.proj.remove_on_init_callback(self.on_init)
+
+        return self.__captured_imgs if success else None
+
+
+    def on_draw(self):
         # # #
         # Could take camera picture here, would be synchronised with projector
         # # #
+        
+        if self.__pattern_index == len(self.__patterns):
+            self.proj.finished = True
+            return
 
-        if (last_update is None) or (now - last_update) >= (self.pattern_time * 1e9):
-            # Check if not looping finished
-            if (self.p_index == len(self.patterns)) and (not self.loop):
-                self.proj.finished = True
-                return
+        # Project the fringe pattern
+        self.proj.set_img(self.__patterns[self.__pattern_index])
 
-            # Project the fringe pattern
-            self.proj.set_img(self.patterns[self.p_index])
+        self.__pattern_index += 1
 
-            self.p_index = (self.p_index + 1) % len(self.patterns)
+    def on_init(self):
+        self.__pattern_index = 0
 
-    @staticmethod
-    def save_image(img, path):
-        img = Image.fromarray(fringes.to_uint8(img))
-        img.save(path)
-
+        self.proj.set_img(self.__patterns[self.__pattern_index])
+        self.__pattern_index += 1
 
 if __name__ == "__main__":
-    # Gather all of the supported displays, make a projector using the handle
-    display_handles = projector.DisplayManager.get_display_handles()
-    proj = projector.DisplayProjector(display_handles[0])
-    proj.resolution = (1920, 1080) # width, height
+    # Make a DisplayProjector
+    proj = projector.DisplayProjector(resolution=(1280, 720), display_num=1, warmup_time=3.0)
+    program = Program(proj)
+
+    # Complete gamma calibration if required
+    # gamma_imgs = program.gamma_calibrate(64)
+
 
     # Create some fringes
-    num_shifts = 3
-    phases = np.linspace(0.0, 2.0 * np.pi, num_shifts, endpoint=False)
+    num_shifts = 16     # Number of phase shifts
+    num_stripes = 1.0   # Number of stripes (for the whole image)
+    rotation = 0.0      # Stripe rotation (orientation)
 
-    num_stripes = 1.0
-    rotation = 0.0 # Radians
-
-    # Create some RGB fringe patterns (convert to uint8 for DisplayProjector)
+    # Create some RGB fringe patterns
     patterns = np.asarray([
-        fringes.to_uint8(fringes.create_rgb_pattern(proj.resolution, num_stripes, phase, rotation)) 
-        for phase in phases
+        fringes.create_rgb_pattern(proj.resolution, num_stripes, phase, rotation)
+        for phase in np.linspace(0.0, 2.0 * np.pi, num_shifts, endpoint=False)
     ])
 
-    # If you want to mask out a colour channel its fairly simple
-    # rgb_patterns[..., 0] = 0.0 # No red
-    patterns[..., 1] = 0.0 # No green
-    patterns[..., 2] = 0.0 # No blue
+    # Show fringes at 30fps, loop forever, return camera images
+    camera_imgs = program.run(patterns)
+    
 
-    # You can also generate monochomatic greyscale fringes
-    # self.patterns = np.asarray([
-    #     fringes.create_pattern(self.proj.resolution, num_stripes, phase, rotation) for phase in phases
-    # ])
+    # Show red fringes green and blue channels zero'd), loop forever, return camera images
+    patterns[..., 1] = 0.0 # No green channel
+    patterns[..., 2] = 0.0 # No blue channel
+    camera_imgs = program.run(patterns) 
 
-    # Show the created fringes
-    program = Program(proj)
-    program.run(patterns, loop=True, pattern_time=1.0)
+
+    # If you want to save any patterns/images, you can use the save_image function
+    path = Path("some/path/somewhere")
+    for i, pattern in enumerate(patterns):
+        uint_pattern = (pattern * 255).astype(np.uint8)
+        img = Image.fromarray(uint_pattern)
+        # img.save(path / f"pattern{i}.png")
