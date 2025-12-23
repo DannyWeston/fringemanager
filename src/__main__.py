@@ -80,7 +80,7 @@ class Program:
 
 if __name__ == "__main__":
     # Make a DisplayProjector
-    proj = projector.DisplayProjector(resolution=(1280, 720), display_num=1, warmup_time=3.0)
+    proj = projector.DisplayProjector(resolution=(1280, 720), display_num=0, warmup_time=3.0)
     program = Program(proj)
 
     # Complete gamma calibration if required
